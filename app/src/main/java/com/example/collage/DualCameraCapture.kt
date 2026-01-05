@@ -145,6 +145,19 @@ fun DualCameraCaptureDialog(
     fun startMultiplex() {
         stopMultiplex()
         multiplexJob = scope.launch {
+            // "Fake live" strategy:
+            // - Alternate cameras rapidly (time-multiplexing).
+            // - Capture a low-latency still for each lens to keep the last frame fresh.
+            // - UI shows the live Preview of the *currently bound* lens + the latest cached frame
+            //   for the other lens.
+            //
+            // NOTE: This is still not a true simultaneous dual-camera preview. But by reducing the
+            // cycle time, it feels much closer to a live dual feed than a 1s tick.
+
+            val settleMs = 60L      // wait a moment after binding so preview/capture becomes valid
+            val betweenLensMs = 60L // small gap between back->front to reduce thrash
+            val cycleGapMs = 80L    // gap before starting the next back->front cycle
+
             while (isActive) {
                 try {
                     // If user is doing a shutter capture, pause background updates.
@@ -152,21 +165,23 @@ fun DualCameraCaptureDialog(
                         delay(200)
                         continue
                     }
-                    // Every "tick" we refresh BOTH: BACK then FRONT.
+                    // One "cycle" refreshes BOTH: BACK then FRONT as fast as possible.
 
                     // BACK
                     activeLensFacing = CameraSelector.LENS_FACING_BACK
                     bindSingleCamera(CameraSelector.LENS_FACING_BACK)
-                    delay(160)
+                    delay(settleMs)
                     backCapture?.let { cap ->
                         val f = CameraFiles.createTempJpeg(context)
                         latestBackUri = takePictureSuspend(cap, f)
                     }
 
+                    delay(betweenLensMs)
+
                     // FRONT
                     activeLensFacing = CameraSelector.LENS_FACING_FRONT
                     bindSingleCamera(CameraSelector.LENS_FACING_FRONT)
-                    delay(160)
+                    delay(settleMs)
                     frontCapture?.let { cap ->
                         val f = CameraFiles.createTempJpeg(context)
                         latestFrontUri = takePictureSuspend(cap, f)
@@ -175,8 +190,8 @@ fun DualCameraCaptureDialog(
                     // If something fails in fallback loop, just keep trying next tick.
                 }
 
-                // Wait for the next "tick".
-                delay(1000)
+                // Start the next cycle quickly for a more "live" feel.
+                delay(cycleGapMs)
             }
         }
     }
@@ -370,7 +385,7 @@ fun DualCameraCaptureDialog(
 
                     if (isMultiplexFallback) {
                         Text(
-                            "Fallback mode: alternating cameras every 1s. Tap shutter to use the latest pair.",
+                            "Fallback mode: rapid time‑multiplexing (fake live). Tap shutter to use the latest pair.",
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -413,7 +428,7 @@ fun DualCameraCaptureDialog(
                                             // Switch and capture the other lens.
                                             val otherLens = if (lens1IsFront) CameraSelector.LENS_FACING_BACK else CameraSelector.LENS_FACING_FRONT
                                             bindSingleCamera(otherLens)
-                                            delay(180)
+                                            delay(80)
                                             val cap2 = if (otherLens == CameraSelector.LENS_FACING_FRONT) frontCapture else backCapture
                                             if (cap2 != null) {
                                                 val f2 = CameraFiles.createTempJpeg(context)
