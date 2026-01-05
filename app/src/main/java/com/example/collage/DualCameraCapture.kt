@@ -171,26 +171,17 @@ fun DualCameraCaptureDialog(
         val provider = ProcessCameraProvider.getInstance(context).get()
         provider.unbindAll()
 
-        val rotation = when (lensFacing) {
-            CameraSelector.LENS_FACING_FRONT -> frontPreviewView.display?.rotation ?: Surface.ROTATION_0
-            else -> backPreviewView.display?.rotation ?: Surface.ROTATION_0
-        }
-
-        val preview = Preview.Builder()
-            .setTargetRotation(rotation)
-            .build()
-            .also {
-                val pv = if (lensFacing == CameraSelector.LENS_FACING_FRONT) frontPreviewView else backPreviewView
-                it.setSurfaceProvider(pv.surfaceProvider)
-            }
-
+        // IMPORTANT (fallback mode): Do NOT bind a PreviewView here.
+        // Binding/unbinding PreviewViews that are not attached to the window can result in
+        // no frames being produced (black UI), and swapping PreviewViews causes visible blinking.
+        // We only bind ImageCapture and show cached frames in Compose.
         val img = ImageCapture.Builder()
-            .setTargetRotation(rotation)
+            .setTargetRotation(Surface.ROTATION_0)
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
             .build()
 
         val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
-        provider.bindToLifecycle(lifecycleOwner, selector, preview, img)
+        provider.bindToLifecycle(lifecycleOwner, selector, img)
 
         if (lensFacing == CameraSelector.LENS_FACING_FRONT) {
             frontCapture = img
