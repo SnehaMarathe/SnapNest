@@ -8,6 +8,8 @@ import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -37,6 +39,66 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+
+@Composable
+private fun CrossfadeThumb(
+    bitmap: ImageBitmap?,
+    contentDescription: String,
+    modifier: Modifier = Modifier,
+    contentScale: ContentScale = ContentScale.Crop,
+    durationMs: Int = 160
+) {
+    // We crossfade between the previous cached frame and the newest cached frame.
+    // This removes the harsh "blink" feeling when frames update.
+    var current by remember { mutableStateOf<ImageBitmap?>(null) }
+    var previous by remember { mutableStateOf<ImageBitmap?>(null) }
+    val alpha = remember { Animatable(1f) }
+
+    LaunchedEffect(bitmap) {
+        if (bitmap == null) {
+            // Nothing to show.
+            previous = current
+            current = null
+            alpha.snapTo(1f)
+            return@LaunchedEffect
+        }
+
+        if (current === bitmap) return@LaunchedEffect
+        previous = current
+        current = bitmap
+        alpha.snapTo(0f)
+        alpha.animateTo(1f, animationSpec = tween(durationMs))
+    }
+
+    Box(modifier) {
+        val p = previous
+        val c = current
+
+        if (p != null && c != null) {
+            Image(
+                bitmap = p,
+                contentDescription = contentDescription,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = contentScale,
+                alpha = (1f - alpha.value).coerceIn(0f, 1f)
+            )
+            Image(
+                bitmap = c,
+                contentDescription = contentDescription,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = contentScale,
+                alpha = alpha.value.coerceIn(0f, 1f)
+            )
+        } else if (c != null) {
+            Image(
+                bitmap = c,
+                contentDescription = contentDescription,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = contentScale
+            )
+        }
+    }
+}
 
 /**
  * Full-screen overlay that *tries* to open FRONT + BACK cameras at the same time.
@@ -82,6 +144,114 @@ fun DualCameraCaptureDialog(
     }
     val frontThumb: ImageBitmap? by produceState<ImageBitmap?>(initialValue = null, latestFrontUri) {
         value = latestFrontUri?.let { ThumbnailLoader.loadThumbnail(context, it, 900) }
+    }
+
+    @Composable
+    fun CrossfadeThumb(
+        bitmap: ImageBitmap?,
+        contentDescription: String,
+        modifier: Modifier = Modifier
+    ) {
+        // Keep a previous frame around and crossfade to the new one.
+        var previous by remember { mutableStateOf<ImageBitmap?>(null) }
+        var current by remember { mutableStateOf<ImageBitmap?>(null) }
+
+        val alpha = remember { Animatable(1f) }
+
+        LaunchedEffect(bitmap) {
+            if (bitmap == null) return@LaunchedEffect
+            if (current == null) {
+                current = bitmap
+                alpha.snapTo(1f)
+                return@LaunchedEffect
+            }
+            if (bitmap == current) return@LaunchedEffect
+
+            previous = current
+            current = bitmap
+            alpha.snapTo(0f)
+            alpha.animateTo(1f, animationSpec = tween(durationMillis = 180))
+        }
+
+        Box(modifier) {
+            val prev = previous
+            val cur = current
+            if (prev != null) {
+                Image(
+                    bitmap = prev,
+                    contentDescription = "$contentDescription (previous)",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                    alpha = 1f - alpha.value
+                )
+            }
+            if (cur != null) {
+                Image(
+                    bitmap = cur,
+                    contentDescription = contentDescription,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                    alpha = alpha.value
+                )
+            }
+        }
+    }
+
+    @Composable
+    fun CrossfadeThumb(
+        bitmap: ImageBitmap?,
+        contentDescription: String,
+        modifier: Modifier = Modifier
+    ) {
+        // Keep previous frame and crossfade to the new one.
+        var current by remember { mutableStateOf<ImageBitmap?>(null) }
+        var previous by remember { mutableStateOf<ImageBitmap?>(null) }
+        val progress = remember { Animatable(1f) }
+
+        LaunchedEffect(bitmap) {
+            if (bitmap == null) return@LaunchedEffect
+            if (current == null) {
+                current = bitmap
+                progress.snapTo(1f)
+                return@LaunchedEffect
+            }
+            if (bitmap === current) return@LaunchedEffect
+            previous = current
+            current = bitmap
+            progress.snapTo(0f)
+            progress.animateTo(
+                1f,
+                animationSpec = tween(durationMillis = 180)
+            )
+            // Drop the previous frame after the fade completes to save memory.
+            previous = null
+        }
+
+        Box(modifier) {
+            val p = progress.value
+            val prev = previous
+            val curr = current
+            if (prev != null) {
+                Image(
+                    bitmap = prev,
+                    contentDescription = contentDescription,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer(alpha = 1f - p),
+                    contentScale = ContentScale.Crop
+                )
+            }
+            if (curr != null) {
+                Image(
+                    bitmap = curr,
+                    contentDescription = contentDescription,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer(alpha = p),
+                    contentScale = ContentScale.Crop
+                )
+            }
+        }
     }
 
     suspend fun takePictureSuspend(capture: ImageCapture, file: java.io.File): Uri =
@@ -313,18 +483,13 @@ fun DualCameraCaptureDialog(
                                 .background(Color.Black)
                         ) {
                             if (isMultiplexFallback) {
-                                // In fallback mode, we only have one live preview at a time.
-                                // This slot shows the latest BACK capture, or a live BACK preview when active.
-                                if (backCapture != null) {
-                                    AndroidView(factory = { backPreviewView }, modifier = Modifier.fillMaxSize())
-                                } else if (backThumb != null) {
-                                    Image(
-                                        bitmap = backThumb!!,
-                                        contentDescription = "Back cached",
-                                        modifier = Modifier.fillMaxSize(),
-                                        contentScale = ContentScale.Crop
-                                    )
-                                }
+                                // Fallback mode: show rapidly refreshed cached frames.
+                                // Avoid swapping PreviewViews in/out (causes blinking on many devices).
+                                CrossfadeThumb(
+                                    bitmap = backThumb,
+                                    contentDescription = "Back cached",
+                                    modifier = Modifier.fillMaxSize()
+                                )
                             } else {
                                 AndroidView(factory = { backPreviewView }, modifier = Modifier.fillMaxSize())
                             }
@@ -346,17 +511,11 @@ fun DualCameraCaptureDialog(
                                 .background(Color.Black)
                         ) {
                             if (isMultiplexFallback) {
-                                // In fallback mode, this slot shows latest FRONT capture, or live FRONT preview when active.
-                                if (frontCapture != null) {
-                                    AndroidView(factory = { frontPreviewView }, modifier = Modifier.fillMaxSize())
-                                } else if (frontThumb != null) {
-                                    Image(
-                                        bitmap = frontThumb!!,
-                                        contentDescription = "Front cached",
-                                        modifier = Modifier.fillMaxSize(),
-                                        contentScale = ContentScale.Crop
-                                    )
-                                }
+                                CrossfadeThumb(
+                                    bitmap = frontThumb,
+                                    contentDescription = "Front cached",
+                                    modifier = Modifier.fillMaxSize()
+                                )
                             } else {
                                 AndroidView(factory = { frontPreviewView }, modifier = Modifier.fillMaxSize())
                             }
