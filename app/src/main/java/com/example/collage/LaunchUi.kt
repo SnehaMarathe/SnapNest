@@ -3,6 +3,7 @@ package com.example.collage
 import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -39,6 +40,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import com.example.collage.ui.theme.BrandBlue
 import com.example.collage.ui.theme.BrandPink
 import com.example.collage.ui.theme.BrandPurple
@@ -153,16 +155,27 @@ fun LaunchUiRoot(vm: CollageViewModel) {
     fun startCamera(slotIdx: Int) {
         activeCameraSlot = slotIdx
         activeSlot = slotIdx
+        val granted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED
+        if (granted) return
         cameraPermission.launch(Manifest.permission.CAMERA)
     }
 
-    // Auto-start camera on Slot 1 (index 0) for a faster flow
-    var didAutoStartCamera by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        if (!didAutoStartCamera && vm.selectedTemplate.value.slots.isNotEmpty()) {
-            didAutoStartCamera = true
-            startCamera(0)
-        }
+    // Auto-start camera for each template (best UX).
+    // When template changes, start camera on the first empty slot (or slot 0).
+    LaunchedEffect(vm.selectedTemplate.value.id) {
+        val slotsCount = vm.selectedTemplate.value.slots.size
+        if (slotsCount == 0) return@LaunchedEffect
+        // If user is in dual camera overlay, don't interrupt.
+        if (showDualCamera) return@LaunchedEffect
+
+        // Pick first empty slot; fallback to slot 0.
+        val firstEmpty = (0 until slotsCount).firstOrNull { i ->
+            vm.slotUris.getOrNull(i) == null
+        } ?: 0
+        startCamera(firstEmpty)
     }
 
     // ---- Export + share ----
