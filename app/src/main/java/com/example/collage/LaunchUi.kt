@@ -32,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.SpanStyle
@@ -46,6 +47,64 @@ import com.example.collage.ui.theme.BrandPink
 import com.example.collage.ui.theme.BrandPurple
 import com.yalantis.ucrop.UCrop
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.material3.BorderStroke
+import androidx.compose.ui.text.style.TextAlign
+
+@Composable
+private fun TopBarIconBox(
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+    icon: ImageVector,
+    contentDescription: String,
+    tint: Color
+) {
+    Surface(
+        modifier = modifier
+            .height(40.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                tint = tint
+            )
+        }
+    }
+}
+
+@Composable
+private fun FollowInstagramBar() {
+    val context = LocalContext.current
+    Surface(tonalElevation = 1.dp) {
+        TextButton(
+            onClick = {
+                val uri = Uri.parse("https://instagram.com/Snap2Nest")
+                val i = Intent(Intent.ACTION_VIEW, uri)
+                try { context.startActivity(i) } catch (_: Exception) { }
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 2.dp)
+        ) {
+            Text(
+                text = "Follow on Instagram @Snap2Nest",
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
 
 private enum class Tab { TEMPLATES, ADJUST, EXPORT }
 
@@ -237,15 +296,7 @@ fun LaunchUiRoot(vm: CollageViewModel) {
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             CenterAlignedTopAppBar(
-                navigationIcon = {
-                    Icon(
-                        painter = painterResource(id = R.drawable.snap2nest_logo),
-                        contentDescription = "Snap2Nest",
-                        modifier = Modifier
-                            .padding(start = 12.dp)
-                            .size(28.dp)
-                    )
-                },
+                navigationIcon = {},
                 title = {
                     Text(
                         text = buildAnnotatedString {
@@ -270,7 +321,9 @@ fun LaunchUiRoot(vm: CollageViewModel) {
             )
         },
         bottomBar = {
-            NavigationBar {
+            Column {
+                FollowInstagramBar()
+                NavigationBar {
                 NavigationBarItem(
                     selected = tab == Tab.TEMPLATES,
                     onClick = { tab = Tab.TEMPLATES },
@@ -292,6 +345,7 @@ fun LaunchUiRoot(vm: CollageViewModel) {
                     icon = { Icon(Icons.Filled.Upload, contentDescription = null) },
                     label = { Text("Export") }
                 )
+            }
             }
         }
     ) { padding ->
@@ -321,25 +375,21 @@ fun LaunchUiRoot(vm: CollageViewModel) {
 Spacer(Modifier.height(4.dp))
 // Global camera controls (icons only) — applies to all slots
 Row(
-    modifier = Modifier.fillMaxWidth(),
-    // Equispaced icon chips to fill the full width (more professional toolbar look)
+    modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 2.dp),
     horizontalArrangement = Arrangement.spacedBy(8.dp),
     verticalAlignment = Alignment.CenterVertically
 ) {
-    AssistChip(
+    TopBarIconBox(
         modifier = Modifier.weight(1f),
         onClick = { vm.gridOn.value = !vm.gridOn.value },
-        label = { },
-        leadingIcon = {
-            Icon(
-                Icons.Filled.GridOn,
-                contentDescription = "Grid",
-                tint = if (vm.gridOn.value) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
+        icon = Icons.Filled.GridOn,
+        contentDescription = "Grid",
+        tint = if (vm.gridOn.value) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
     )
 
-    AssistChip(
+    TopBarIconBox(
         modifier = Modifier.weight(1f),
         onClick = {
             vm.flashModeUi.value = when (vm.flashModeUi.value) {
@@ -348,71 +398,33 @@ Row(
                 else -> 0
             }
         },
-        label = { },
-        leadingIcon = {
-            val icon = when (vm.flashModeUi.value) {
-                0 -> Icons.Filled.FlashOff
-                1 -> Icons.Filled.FlashAuto
-                else -> Icons.Filled.FlashOn
-            }
-            Icon(icon, contentDescription = "Flash")
-        }
+        icon = when (vm.flashModeUi.value) {
+            1 -> Icons.Filled.FlashOn
+            2 -> Icons.Filled.FlashAuto
+            else -> Icons.Filled.FlashOff
+        },
+        contentDescription = "Flash",
+        tint = MaterialTheme.colorScheme.onSurfaceVariant
     )
 
-    AssistChip(
+    TopBarIconBox(
         modifier = Modifier.weight(1f),
         onClick = { vm.lensFacingUi.value = if (vm.lensFacingUi.value == 0) 1 else 0 },
-        label = { },
-        leadingIcon = { Icon(Icons.Filled.Cameraswitch, contentDescription = "Flip") }
+        icon = Icons.Filled.Cameraswitch,
+        contentDescription = "Flip",
+        tint = MaterialTheme.colorScheme.onSurfaceVariant
     )
 
-    // Dual camera (front + back) capture into first 2 slots
-    AssistChip(
+    // Dual camera (front + back)
+    TopBarIconBox(
         modifier = Modifier.weight(1f),
-        onClick = {
-            // Requests permission, then opens the dual camera overlay
-            dualCameraPermission.launch(Manifest.permission.CAMERA)
-        },
-        label = { },
-        leadingIcon = {
-            // "Dashboard" reads well as a 2-slot icon without adding custom assets
-            Icon(Icons.Filled.Dashboard, contentDescription = "Dual camera")
-        }
+        onClick = { dualCameraPermission.launch(Manifest.permission.CAMERA) },
+        icon = Icons.Filled.Dashboard,
+        contentDescription = "Dual",
+        tint = MaterialTheme.colorScheme.onSurfaceVariant
     )
 }
-
-                }
-            }
-
-Box(
-
-
-    modifier = Modifier
-
-
-        .fillMaxWidth()
-
-
-        .weight(1f),
-
-
-    contentAlignment = Alignment.Center
-
-
-) {
-
-
-    key(imageRefreshTick) {
-
-
-        CollagePreview(
-        modifier = Modifier
-
-
-            .fillMaxWidth()
-
-
-            .aspectRatio(1f)
+)
 
 
             .clip(RoundedCornerShape(22.dp)),
@@ -466,8 +478,13 @@ Box(
 
 
             // ✅ Global camera action bar BELOW the slot (keeps slot UI clean)
-            if (activeCameraSlot >= 0 || lastDraftSlot >= 0) {
-                val actionSlot = if (lastDraftSlot >= 0) lastDraftSlot else activeCameraSlot
+// Always visible: stays in place for a calmer, more professional UX.
+val hasActionContext = activeCameraSlot >= 0 || lastDraftSlot >= 0
+val actionSlot = when {
+    lastDraftSlot >= 0 -> lastDraftSlot
+    activeCameraSlot >= 0 -> activeCameraSlot
+    else -> 0
+}
                 val draft = vm.draftCaptureUris.getOrNull(actionSlot)
                 Spacer(Modifier.height(8.dp))
                 Row(
@@ -478,6 +495,7 @@ Box(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     OutlinedButton(
+                        enabled = hasActionContext,
                         onClick = {
                             if (actionSlot >= 0) vm.clearDraftCapture(actionSlot)
                             if (lastDraftSlot == actionSlot) lastDraftSlot = -1
@@ -515,7 +533,6 @@ Box(
                         enabled = draft != null
                     ) { Text("Edit") }
                 }
-            }
         }
     }
 
