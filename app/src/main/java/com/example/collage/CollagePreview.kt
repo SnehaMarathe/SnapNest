@@ -246,7 +246,7 @@ LaunchedEffect(captureRequestToken) {
             object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                     val uri = outputFileResults.savedUri ?: CameraFiles.toContentUri(context, file)
-                    vm.setSlotUri(slotIndex, uri)
+                    vm.setDraftCapture(slotIndex, uri)
                     capturedUri = uri
                     onCaptured(slotIndex, uri)
                     // thumbnail is loaded lazily below

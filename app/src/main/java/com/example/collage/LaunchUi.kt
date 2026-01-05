@@ -66,6 +66,8 @@ fun LaunchUiRoot(vm: CollageViewModel) {
     var cropSlot by remember { mutableIntStateOf(-1) }
     // Slot currently showing CameraX preview
     var activeCameraSlot by remember { mutableIntStateOf(-1) }
+    // Slot that has the most recent draft capture (for Edit even after auto-advance)
+    var lastDraftSlot by remember { mutableIntStateOf(-1) }
 
     var showAdjustSheet by remember { mutableStateOf(false) }
     var showExportSheet by remember { mutableStateOf(false) }
@@ -173,7 +175,7 @@ fun LaunchUiRoot(vm: CollageViewModel) {
 
         // Pick first empty slot; fallback to slot 0.
         val firstEmpty = (0 until slotsCount).firstOrNull { i ->
-            vm.slotUris.getOrNull(i) == null
+            (vm.slotUris.getOrNull(i) == null && vm.draftCaptureUris.getOrNull(i) == null)
         } ?: 0
         startCamera(firstEmpty)
     }
@@ -235,6 +237,15 @@ fun LaunchUiRoot(vm: CollageViewModel) {
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             CenterAlignedTopAppBar(
+                navigationIcon = {
+                    Icon(
+                        painter = painterResource(id = R.drawable.snap2nest_logo),
+                        contentDescription = "Snap2Nest",
+                        modifier = Modifier
+                            .padding(start = 12.dp)
+                            .size(28.dp)
+                    )
+                },
                 title = {
                     Text(
                         text = buildAnnotatedString {
@@ -243,7 +254,7 @@ fun LaunchUiRoot(vm: CollageViewModel) {
                                     brush = Brush.linearGradient(listOf(BrandPurple, BrandPink)),
                                     fontWeight = FontWeight.ExtraBold
                                 )
-                            ) { append("Snap") }
+                            ) { append("Snap2") }
                             withStyle(
                                 SpanStyle(
                                     brush = Brush.linearGradient(listOf(BrandBlue, Color(0xFF1F6BFF))),
@@ -421,17 +432,27 @@ Box(
                 },
                 onTransformChange = { i, tr -> vm.setSlotTransform(i, tr) },
                 onCameraCaptured = { slotIdx, _ ->
+                    lastDraftSlot = slotIdx
                     // Auto-advance: after a shot, move camera to the next slot (if any)
                     activeSlot = slotIdx
-                    val next = slotIdx + 1
-                    if (next < vm.selectedTemplate.value.slots.size) {
+                    // Find the next empty slot (so we don't overwrite existing images/drafts)
+                    val slotsCount = vm.selectedTemplate.value.slots.size
+                    var next = slotIdx + 1
+                    while (next < slotsCount && (vm.slotUris[next] != null || vm.draftCaptureUris[next] != null)) {
+                        next++
+                    }
+                    if (next < slotsCount) {
                         startCamera(next)
                     } else {
+                        // No more empty slots; keep action bar available for Edit
                         activeCameraSlot = -1
                     }
                 },
                 onCameraCancel = {
-                    if (activeCameraSlot >= 0) vm.clearDraftCapture(activeCameraSlot)
+                    if (activeCameraSlot >= 0) {
+                        vm.clearDraftCapture(activeCameraSlot)
+                        if (lastDraftSlot == activeCameraSlot) lastDraftSlot = -1
+                    }
                     activeCameraSlot = -1
                 }
             )
@@ -445,8 +466,9 @@ Box(
 
 
             // ✅ Global camera action bar BELOW the slot (keeps slot UI clean)
-            if (activeCameraSlot >= 0) {
-                val draft = vm.draftCaptureUris.getOrNull(activeCameraSlot)
+            if (activeCameraSlot >= 0 || lastDraftSlot >= 0) {
+                val actionSlot = if (lastDraftSlot >= 0) lastDraftSlot else activeCameraSlot
+                val draft = vm.draftCaptureUris.getOrNull(actionSlot)
                 Spacer(Modifier.height(8.dp))
                 Row(
                     modifier = Modifier
@@ -457,7 +479,8 @@ Box(
                 ) {
                     OutlinedButton(
                         onClick = {
-                            vm.clearDraftCapture(activeCameraSlot)
+                            if (actionSlot >= 0) vm.clearDraftCapture(actionSlot)
+                            if (lastDraftSlot == actionSlot) lastDraftSlot = -1
                             activeSlot = -1
                             activeCameraSlot = -1
                         }
@@ -465,14 +488,17 @@ Box(
 
                     FilledTonalIconButton(
                         onClick = {
-                            if (draft == null) vm.requestCapture(activeCameraSlot)
+                            if (activeCameraSlot < 0) return@FilledTonalIconButton
+                            val activeDraft = vm.draftCaptureUris.getOrNull(activeCameraSlot)
+                            if (activeDraft == null) vm.requestCapture(activeCameraSlot)
                             else vm.clearDraftCapture(activeCameraSlot)
                         },
-                        modifier = Modifier.size(72.dp)
+                        modifier = Modifier.size(72.dp),
+                        enabled = activeCameraSlot >= 0
                     ) {
                         Icon(
-                            imageVector = if (draft == null) Icons.Filled.CameraAlt else Icons.Filled.Refresh,
-                            contentDescription = if (draft == null) "Capture" else "Retake",
+                            imageVector = if (activeCameraSlot >= 0 && vm.draftCaptureUris.getOrNull(activeCameraSlot) != null) Icons.Filled.Refresh else Icons.Filled.CameraAlt,
+                            contentDescription = if (activeCameraSlot >= 0 && vm.draftCaptureUris.getOrNull(activeCameraSlot) != null) "Retake" else "Capture",
                             modifier = Modifier.size(30.dp)
                         )
                     }
@@ -480,8 +506,10 @@ Box(
                     Button(
                         onClick = {
                             val uri = draft ?: return@Button
-                            vm.setSlotUri(activeCameraSlot, uri)
-                            activeSlot = activeCameraSlot
+                            vm.setSlotUri(actionSlot, uri)
+                            activeSlot = actionSlot
+                            // once committed, clear lastDraftSlot if it was this slot
+                            if (lastDraftSlot == actionSlot) lastDraftSlot = -1
                             launchCrop(activeSlot, uri)
                         },
                         enabled = draft != null
@@ -573,10 +601,23 @@ if (showExportSheet) {
         DualCameraCaptureDialog(
             onDismiss = { showDualCamera = false },
             onCaptured = { frontUri, backUri ->
-                // Put into first 2 slots (if present)
+                // Place into the next available empty slots (so we never overwrite existing images/drafts)
                 val slotsCount = vm.selectedTemplate.value.slots.size
-                if (slotsCount >= 1) vm.setSlotUri(0, backUri)
-                if (slotsCount >= 2) vm.setSlotUri(1, frontUri)
+                val empty = (0 until slotsCount).filter { vm.slotUris[it] == null && vm.draftCaptureUris[it] == null }.toMutableList()
+
+                val backSlot = if (empty.isNotEmpty()) empty.removeAt(0) else null
+                val frontSlot = if (empty.isNotEmpty()) empty.removeAt(0) else null
+
+                if (backSlot != null) vm.setSlotUri(backSlot, backUri)
+                if (frontSlot != null) vm.setSlotUri(frontSlot, frontUri)
+
+                // After dual capture, auto-start camera on next empty slot (if any)
+                val nextSlot = empty.firstOrNull()
+                if (nextSlot != null) {
+                    startCamera(nextSlot)
+                } else {
+                    activeCameraSlot = -1
+                }
 
                 // Cache thumbs to refresh faster
                 scope.launch {
