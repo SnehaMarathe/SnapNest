@@ -49,7 +49,7 @@ import com.yalantis.ucrop.UCrop
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.material3.BorderStroke
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.text.style.TextAlign
 
 @Composable
@@ -424,11 +424,11 @@ Row(
         tint = MaterialTheme.colorScheme.onSurfaceVariant
     )
 }
-)
-
-
-            .clip(RoundedCornerShape(22.dp)),
-
+            CollagePreview(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(1f)
+                    .clip(RoundedCornerShape(22.dp)),
                 template = vm.selectedTemplate.value,
                 slotUris = vm.slotUris,
                 slotTransforms = vm.slotTransforms,
@@ -440,25 +440,24 @@ Row(
                 onSlotTap = { idx -> startCamera(idx) },
                 onSlotLongPress = { idx ->
                     activeSlot = idx
-                    galleryPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    galleryPicker.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                    )
                 },
                 onTransformChange = { i, tr -> vm.setSlotTransform(i, tr) },
                 onCameraCaptured = { slotIdx, _ ->
                     lastDraftSlot = slotIdx
-                    // Auto-advance: after a shot, move camera to the next slot (if any)
                     activeSlot = slotIdx
-                    // Find the next empty slot (so we don't overwrite existing images/drafts)
+
                     val slotsCount = vm.selectedTemplate.value.slots.size
                     var next = slotIdx + 1
-                    while (next < slotsCount && (vm.slotUris[next] != null || vm.draftCaptureUris[next] != null)) {
+                    while (
+                        next < slotsCount &&
+                        (vm.slotUris[next] != null || vm.draftCaptureUris[next] != null)
+                    ) {
                         next++
                     }
-                    if (next < slotsCount) {
-                        startCamera(next)
-                    } else {
-                        // No more empty slots; keep action bar available for Edit
-                        activeCameraSlot = -1
-                    }
+                    if (next < slotsCount) startCamera(next) else activeCameraSlot = -1
                 },
                 onCameraCancel = {
                     if (activeCameraSlot >= 0) {
@@ -469,70 +468,74 @@ Row(
                 }
             )
 
-
-    }
-
-
-
-            }
-
-
             // ✅ Global camera action bar BELOW the slot (keeps slot UI clean)
-// Always visible: stays in place for a calmer, more professional UX.
-val hasActionContext = activeCameraSlot >= 0 || lastDraftSlot >= 0
-val actionSlot = when {
-    lastDraftSlot >= 0 -> lastDraftSlot
-    activeCameraSlot >= 0 -> activeCameraSlot
-    else -> 0
-}
-                val draft = vm.draftCaptureUris.getOrNull(actionSlot)
-                Spacer(Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    OutlinedButton(
-                        enabled = hasActionContext,
-                        onClick = {
-                            if (actionSlot >= 0) vm.clearDraftCapture(actionSlot)
-                            if (lastDraftSlot == actionSlot) lastDraftSlot = -1
-                            activeSlot = -1
-                            activeCameraSlot = -1
-                        }
-                    ) { Text("Cancel") }
+            // Always visible: stays in place for a calmer, more professional UX.
+            val hasActionContext = activeCameraSlot >= 0 || lastDraftSlot >= 0
+            val actionSlot = when {
+                lastDraftSlot >= 0 -> lastDraftSlot
+                activeCameraSlot >= 0 -> activeCameraSlot
+                else -> 0
+            }
+            val draft = vm.draftCaptureUris.getOrNull(actionSlot)
 
-                    FilledTonalIconButton(
-                        onClick = {
-                            if (activeCameraSlot < 0) return@FilledTonalIconButton
-                            val activeDraft = vm.draftCaptureUris.getOrNull(activeCameraSlot)
-                            if (activeDraft == null) vm.requestCapture(activeCameraSlot)
-                            else vm.clearDraftCapture(activeCameraSlot)
-                        },
-                        modifier = Modifier.size(72.dp),
-                        enabled = activeCameraSlot >= 0
-                    ) {
-                        Icon(
-                            imageVector = if (activeCameraSlot >= 0 && vm.draftCaptureUris.getOrNull(activeCameraSlot) != null) Icons.Filled.Refresh else Icons.Filled.CameraAlt,
-                            contentDescription = if (activeCameraSlot >= 0 && vm.draftCaptureUris.getOrNull(activeCameraSlot) != null) "Retake" else "Capture",
-                            modifier = Modifier.size(30.dp)
-                        )
+            Spacer(Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                OutlinedButton(
+                    enabled = hasActionContext,
+                    onClick = {
+                        if (actionSlot >= 0) vm.clearDraftCapture(actionSlot)
+                        if (lastDraftSlot == actionSlot) lastDraftSlot = -1
+                        activeSlot = -1
+                        activeCameraSlot = -1
                     }
+                ) { Text("Cancel") }
 
-                    Button(
-                        onClick = {
-                            val uri = draft ?: return@Button
-                            vm.setSlotUri(actionSlot, uri)
-                            activeSlot = actionSlot
-                            // once committed, clear lastDraftSlot if it was this slot
-                            if (lastDraftSlot == actionSlot) lastDraftSlot = -1
-                            launchCrop(activeSlot, uri)
-                        },
-                        enabled = draft != null
-                    ) { Text("Edit") }
+                FilledTonalIconButton(
+                    onClick = {
+                        if (activeCameraSlot < 0) return@FilledTonalIconButton
+                        val activeDraft = vm.draftCaptureUris.getOrNull(activeCameraSlot)
+                        if (activeDraft == null) vm.requestCapture(activeCameraSlot)
+                        else vm.clearDraftCapture(activeCameraSlot)
+                    },
+                    modifier = Modifier.size(72.dp),
+                    enabled = activeCameraSlot >= 0
+                ) {
+                    Icon(
+                        imageVector =
+                            if (
+                                activeCameraSlot >= 0 &&
+                                vm.draftCaptureUris.getOrNull(activeCameraSlot) != null
+                            ) Icons.Filled.Refresh else Icons.Filled.CameraAlt,
+                        contentDescription =
+                            if (
+                                activeCameraSlot >= 0 &&
+                                vm.draftCaptureUris.getOrNull(activeCameraSlot) != null
+                            ) "Retake" else "Capture",
+                        modifier = Modifier.size(30.dp)
+                    )
                 }
+
+                Button(
+                    onClick = {
+                        val uri = draft ?: return@Button
+                        vm.setSlotUri(actionSlot, uri)
+                        activeSlot = actionSlot
+                        // once committed, clear lastDraftSlot if it was this slot
+                        if (lastDraftSlot == actionSlot) lastDraftSlot = -1
+                        launchCrop(activeSlot, uri)
+                    },
+                    enabled = draft != null
+                ) { Text("Edit") }
+            }
+                }
+            }
         }
     }
 
