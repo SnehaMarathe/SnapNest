@@ -2,11 +2,13 @@ package com.example.collage
 
 import android.net.Uri
 import android.view.Surface
+import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -19,13 +21,22 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 /**
  * Full-screen overlay that *tries* to open FRONT + BACK cameras at the same time.
@@ -51,12 +62,129 @@ fun DualCameraCaptureDialog(
     var backCapture by remember { mutableStateOf<ImageCapture?>(null) }
     var frontCapture by remember { mutableStateOf<ImageCapture?>(null) }
     var bindError by remember { mutableStateOf<String?>(null) }
+    var isMultiplexFallback by remember { mutableStateOf(false) }
     var isBinding by remember { mutableStateOf(true) }
     var isCapturing by remember { mutableStateOf(false) }
+
+    // Fallback: keep the latest images we "fake-capture" by alternating cameras.
+    var latestBackUri by remember { mutableStateOf<Uri?>(null) }
+    var latestFrontUri by remember { mutableStateOf<Uri?>(null) }
+
+    // In fallback mode we actively bind only one lens at a time.
+    var activeLensFacing by remember { mutableStateOf(CameraSelector.LENS_FACING_BACK) }
+
+    val scope = rememberCoroutineScope()
+    var multiplexJob by remember { mutableStateOf<Job?>(null) }
+
+    // Load thumbnails for cached URIs (fallback mode UI)
+    val backThumb: ImageBitmap? by produceState<ImageBitmap?>(initialValue = null, latestBackUri) {
+        value = latestBackUri?.let { ThumbnailLoader.loadThumbnail(context, it, 900) }
+    }
+    val frontThumb: ImageBitmap? by produceState<ImageBitmap?>(initialValue = null, latestFrontUri) {
+        value = latestFrontUri?.let { ThumbnailLoader.loadThumbnail(context, it, 900) }
+    }
+
+    suspend fun takePictureSuspend(capture: ImageCapture, file: java.io.File): Uri =
+        suspendCancellableCoroutine { cont ->
+            val out = ImageCapture.OutputFileOptions.Builder(file).build()
+            capture.takePicture(
+                out,
+                executor,
+                object : ImageCapture.OnImageSavedCallback {
+                    override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                        val uri = output.savedUri ?: CameraFiles.toContentUri(context, file)
+                        if (!cont.isCompleted) cont.resume(uri)
+                    }
+
+                    override fun onError(exception: ImageCaptureException) {
+                        if (!cont.isCompleted) cont.resumeWithException(exception)
+                    }
+                }
+            )
+        }
+
+    suspend fun bindSingleCamera(lensFacing: Int) {
+        val provider = ProcessCameraProvider.getInstance(context).get()
+        provider.unbindAll()
+
+        val rotation = when (lensFacing) {
+            CameraSelector.LENS_FACING_FRONT -> frontPreviewView.display?.rotation ?: Surface.ROTATION_0
+            else -> backPreviewView.display?.rotation ?: Surface.ROTATION_0
+        }
+
+        val preview = Preview.Builder()
+            .setTargetRotation(rotation)
+            .build()
+            .also {
+                val pv = if (lensFacing == CameraSelector.LENS_FACING_FRONT) frontPreviewView else backPreviewView
+                it.setSurfaceProvider(pv.surfaceProvider)
+            }
+
+        val img = ImageCapture.Builder()
+            .setTargetRotation(rotation)
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            .build()
+
+        val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
+        provider.bindToLifecycle(lifecycleOwner, selector, preview, img)
+
+        if (lensFacing == CameraSelector.LENS_FACING_FRONT) {
+            frontCapture = img
+            backCapture = null
+        } else {
+            backCapture = img
+            frontCapture = null
+        }
+    }
+
+    fun stopMultiplex() {
+        multiplexJob?.cancel()
+        multiplexJob = null
+    }
+
+    fun startMultiplex() {
+        stopMultiplex()
+        multiplexJob = scope.launch {
+            while (isActive) {
+                try {
+                    // If user is doing a shutter capture, pause background updates.
+                    if (isCapturing) {
+                        delay(200)
+                        continue
+                    }
+                    // Every "tick" we refresh BOTH: BACK then FRONT.
+
+                    // BACK
+                    activeLensFacing = CameraSelector.LENS_FACING_BACK
+                    bindSingleCamera(CameraSelector.LENS_FACING_BACK)
+                    delay(160)
+                    backCapture?.let { cap ->
+                        val f = CameraFiles.createTempJpeg(context)
+                        latestBackUri = takePictureSuspend(cap, f)
+                    }
+
+                    // FRONT
+                    activeLensFacing = CameraSelector.LENS_FACING_FRONT
+                    bindSingleCamera(CameraSelector.LENS_FACING_FRONT)
+                    delay(160)
+                    frontCapture?.let { cap ->
+                        val f = CameraFiles.createTempJpeg(context)
+                        latestFrontUri = takePictureSuspend(cap, f)
+                    }
+                } catch (_: Throwable) {
+                    // If something fails in fallback loop, just keep trying next tick.
+                }
+
+                // Wait for the next "tick".
+                delay(1000)
+            }
+        }
+    }
 
     LaunchedEffect(Unit) {
         isBinding = true
         bindError = null
+        isMultiplexFallback = false
 
         try {
             val provider = ProcessCameraProvider.getInstance(context).get()
@@ -114,12 +242,25 @@ fun DualCameraCaptureDialog(
                 bindMethod.invoke(provider, lifecycleOwner, cfgBack, cfgFront)
             } catch (e: Throwable) {
                 // Fallback: if ConcurrentCamera API isn't present or device can't do it.
-                bindError = "Dual-camera preview isn't supported on this device."
+                isMultiplexFallback = true
+                bindError = null
+                startMultiplex()
             }
         } catch (e: Throwable) {
             bindError = "Unable to open cameras."
         } finally {
             isBinding = false
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            stopMultiplex()
+            try {
+                val provider = ProcessCameraProvider.getInstance(context).get()
+                provider.unbindAll()
+            } catch (_: Throwable) {
+            }
         }
     }
 
@@ -156,7 +297,22 @@ fun DualCameraCaptureDialog(
                                 .clip(RoundedCornerShape(16.dp))
                                 .background(Color.Black)
                         ) {
-                            AndroidView(factory = { backPreviewView }, modifier = Modifier.fillMaxSize())
+                            if (isMultiplexFallback) {
+                                // In fallback mode, we only have one live preview at a time.
+                                // This slot shows the latest BACK capture, or a live BACK preview when active.
+                                if (backCapture != null) {
+                                    AndroidView(factory = { backPreviewView }, modifier = Modifier.fillMaxSize())
+                                } else if (backThumb != null) {
+                                    Image(
+                                        bitmap = backThumb!!,
+                                        contentDescription = "Back cached",
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentScale = ContentScale.Crop
+                                    )
+                                }
+                            } else {
+                                AndroidView(factory = { backPreviewView }, modifier = Modifier.fillMaxSize())
+                            }
                             Text(
                                 "Back",
                                 modifier = Modifier
@@ -174,7 +330,21 @@ fun DualCameraCaptureDialog(
                                 .clip(RoundedCornerShape(16.dp))
                                 .background(Color.Black)
                         ) {
-                            AndroidView(factory = { frontPreviewView }, modifier = Modifier.fillMaxSize())
+                            if (isMultiplexFallback) {
+                                // In fallback mode, this slot shows latest FRONT capture, or live FRONT preview when active.
+                                if (frontCapture != null) {
+                                    AndroidView(factory = { frontPreviewView }, modifier = Modifier.fillMaxSize())
+                                } else if (frontThumb != null) {
+                                    Image(
+                                        bitmap = frontThumb!!,
+                                        contentDescription = "Front cached",
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentScale = ContentScale.Crop
+                                    )
+                                }
+                            } else {
+                                AndroidView(factory = { frontPreviewView }, modifier = Modifier.fillMaxSize())
+                            }
                             Text(
                                 "Front",
                                 modifier = Modifier
@@ -198,6 +368,15 @@ fun DualCameraCaptureDialog(
                         )
                     }
 
+                    if (isMultiplexFallback) {
+                        Text(
+                            "Fallback mode: alternating cameras every 1s. Tap shutter to use the latest pair.",
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -206,9 +385,60 @@ fun DualCameraCaptureDialog(
                     ) {
                         FilledTonalIconButton(
                             onClick = {
+                                if (bindError != null || isCapturing) return@FilledTonalIconButton
+
+                                // If we have a cached pair in fallback mode, use it immediately.
+                                if (isMultiplexFallback) {
+                                    val b = latestBackUri
+                                    val f = latestFrontUri
+                                    if (b != null && f != null) {
+                                        onCaptured(f, b)
+                                        return@FilledTonalIconButton
+                                    }
+
+                                    // Otherwise: do a quick refresh cycle (capture active then other) and commit.
+                                    stopMultiplex()
+                                    isCapturing = true
+                                    scope.launch {
+                                        try {
+                                            // Capture currently bound lens first.
+                                            val cap1 = frontCapture ?: backCapture
+                                            val lens1IsFront = frontCapture != null
+                                            if (cap1 != null) {
+                                                val f1 = CameraFiles.createTempJpeg(context)
+                                                val u1 = takePictureSuspend(cap1, f1)
+                                                if (lens1IsFront) latestFrontUri = u1 else latestBackUri = u1
+                                            }
+
+                                            // Switch and capture the other lens.
+                                            val otherLens = if (lens1IsFront) CameraSelector.LENS_FACING_BACK else CameraSelector.LENS_FACING_FRONT
+                                            bindSingleCamera(otherLens)
+                                            delay(180)
+                                            val cap2 = if (otherLens == CameraSelector.LENS_FACING_FRONT) frontCapture else backCapture
+                                            if (cap2 != null) {
+                                                val f2 = CameraFiles.createTempJpeg(context)
+                                                val u2 = takePictureSuspend(cap2, f2)
+                                                if (otherLens == CameraSelector.LENS_FACING_FRONT) latestFrontUri = u2 else latestBackUri = u2
+                                            }
+
+                                            val b2 = latestBackUri
+                                            val f2u = latestFrontUri
+                                            if (b2 != null && f2u != null) {
+                                                onCaptured(f2u, b2)
+                                            }
+                                        } catch (_: Throwable) {
+                                        } finally {
+                                            isCapturing = false
+                                            // Restart background loop so it keeps updating previews.
+                                            if (isMultiplexFallback) startMultiplex()
+                                        }
+                                    }
+                                    return@FilledTonalIconButton
+                                }
+
                                 val back = backCapture
                                 val front = frontCapture
-                                if (back == null || front == null || bindError != null || isCapturing) return@FilledTonalIconButton
+                                if (back == null || front == null) return@FilledTonalIconButton
 
                                 isCapturing = true
 
