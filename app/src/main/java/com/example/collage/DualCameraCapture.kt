@@ -24,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -146,113 +147,6 @@ fun DualCameraCaptureDialog(
         value = latestFrontUri?.let { ThumbnailLoader.loadThumbnail(context, it, 900) }
     }
 
-    @Composable
-    fun CrossfadeThumb(
-        bitmap: ImageBitmap?,
-        contentDescription: String,
-        modifier: Modifier = Modifier
-    ) {
-        // Keep a previous frame around and crossfade to the new one.
-        var previous by remember { mutableStateOf<ImageBitmap?>(null) }
-        var current by remember { mutableStateOf<ImageBitmap?>(null) }
-
-        val alpha = remember { Animatable(1f) }
-
-        LaunchedEffect(bitmap) {
-            if (bitmap == null) return@LaunchedEffect
-            if (current == null) {
-                current = bitmap
-                alpha.snapTo(1f)
-                return@LaunchedEffect
-            }
-            if (bitmap == current) return@LaunchedEffect
-
-            previous = current
-            current = bitmap
-            alpha.snapTo(0f)
-            alpha.animateTo(1f, animationSpec = tween(durationMillis = 180))
-        }
-
-        Box(modifier) {
-            val prev = previous
-            val cur = current
-            if (prev != null) {
-                Image(
-                    bitmap = prev,
-                    contentDescription = "$contentDescription (previous)",
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop,
-                    alpha = 1f - alpha.value
-                )
-            }
-            if (cur != null) {
-                Image(
-                    bitmap = cur,
-                    contentDescription = contentDescription,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop,
-                    alpha = alpha.value
-                )
-            }
-        }
-    }
-
-    @Composable
-    fun CrossfadeThumb(
-        bitmap: ImageBitmap?,
-        contentDescription: String,
-        modifier: Modifier = Modifier
-    ) {
-        // Keep previous frame and crossfade to the new one.
-        var current by remember { mutableStateOf<ImageBitmap?>(null) }
-        var previous by remember { mutableStateOf<ImageBitmap?>(null) }
-        val progress = remember { Animatable(1f) }
-
-        LaunchedEffect(bitmap) {
-            if (bitmap == null) return@LaunchedEffect
-            if (current == null) {
-                current = bitmap
-                progress.snapTo(1f)
-                return@LaunchedEffect
-            }
-            if (bitmap === current) return@LaunchedEffect
-            previous = current
-            current = bitmap
-            progress.snapTo(0f)
-            progress.animateTo(
-                1f,
-                animationSpec = tween(durationMillis = 180)
-            )
-            // Drop the previous frame after the fade completes to save memory.
-            previous = null
-        }
-
-        Box(modifier) {
-            val p = progress.value
-            val prev = previous
-            val curr = current
-            if (prev != null) {
-                Image(
-                    bitmap = prev,
-                    contentDescription = contentDescription,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer(alpha = 1f - p),
-                    contentScale = ContentScale.Crop
-                )
-            }
-            if (curr != null) {
-                Image(
-                    bitmap = curr,
-                    contentDescription = contentDescription,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer(alpha = p),
-                    contentScale = ContentScale.Crop
-                )
-            }
-        }
-    }
 
     suspend fun takePictureSuspend(capture: ImageCapture, file: java.io.File): Uri =
         suspendCancellableCoroutine { cont ->
