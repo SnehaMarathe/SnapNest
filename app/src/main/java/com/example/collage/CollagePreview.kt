@@ -148,6 +148,7 @@ fun CollagePreview(
                             slotAspect = slotAspect,
                             vm = vm,
                             captureRequestToken = vm.captureRequests.getOrNull(idx) ?: 0,
+                            onCaptured = onCameraCaptured,
                             onCancel = onCameraCancel
                         )
                     }
@@ -217,6 +218,7 @@ private fun CameraSlot(
     slotAspect: Float,
     vm: CollageViewModel,
     captureRequestToken: Int,
+    onCaptured: (Int, Uri) -> Unit,
     onCancel: () -> Unit
 ) {
     val context = LocalContext.current
@@ -244,8 +246,9 @@ LaunchedEffect(captureRequestToken) {
             object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                     val uri = outputFileResults.savedUri ?: CameraFiles.toContentUri(context, file)
-                    vm.setDraftCapture(slotIndex, uri)
+                    vm.setSlotUri(slotIndex, uri)
                     capturedUri = uri
+                    onCaptured(slotIndex, uri)
                     // thumbnail is loaded lazily below
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 }

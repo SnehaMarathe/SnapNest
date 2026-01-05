@@ -427,15 +427,6 @@ fun DualCameraCaptureDialog(
                         )
                     }
 
-                    if (isMultiplexFallback) {
-                        Text(
-                            "Fallback mode: rapid time‑multiplexing (fake live). Tap shutter to use the latest pair.",
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()

@@ -156,6 +156,15 @@ fun LaunchUiRoot(vm: CollageViewModel) {
         cameraPermission.launch(Manifest.permission.CAMERA)
     }
 
+    // Auto-start camera on Slot 1 (index 0) for a faster flow
+    var didAutoStartCamera by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (!didAutoStartCamera && vm.selectedTemplate.value.slots.isNotEmpty()) {
+            didAutoStartCamera = true
+            startCamera(0)
+        }
+    }
+
     // ---- Export + share ----
     fun exportNow(): Uri? =
         CollageRenderer.renderAndSave(
@@ -289,10 +298,12 @@ Spacer(Modifier.height(4.dp))
 // Global camera controls (icons only) — applies to all slots
 Row(
     modifier = Modifier.fillMaxWidth(),
+    // Equispaced icon chips to fill the full width (more professional toolbar look)
     horizontalArrangement = Arrangement.spacedBy(8.dp),
     verticalAlignment = Alignment.CenterVertically
 ) {
     AssistChip(
+        modifier = Modifier.weight(1f),
         onClick = { vm.gridOn.value = !vm.gridOn.value },
         label = { },
         leadingIcon = {
@@ -305,6 +316,7 @@ Row(
     )
 
     AssistChip(
+        modifier = Modifier.weight(1f),
         onClick = {
             vm.flashModeUi.value = when (vm.flashModeUi.value) {
                 0 -> 1
@@ -324,6 +336,7 @@ Row(
     )
 
     AssistChip(
+        modifier = Modifier.weight(1f),
         onClick = { vm.lensFacingUi.value = if (vm.lensFacingUi.value == 0) 1 else 0 },
         label = { },
         leadingIcon = { Icon(Icons.Filled.Cameraswitch, contentDescription = "Flip") }
@@ -331,6 +344,7 @@ Row(
 
     // Dual camera (front + back) capture into first 2 slots
     AssistChip(
+        modifier = Modifier.weight(1f),
         onClick = {
             // Requests permission, then opens the dual camera overlay
             dualCameraPermission.launch(Manifest.permission.CAMERA)
@@ -394,8 +408,14 @@ Box(
                 },
                 onTransformChange = { i, tr -> vm.setSlotTransform(i, tr) },
                 onCameraCaptured = { slotIdx, _ ->
-                    // Draft is already stored by the camera layer; wait for Use
+                    // Auto-advance: after a shot, move camera to the next slot (if any)
                     activeSlot = slotIdx
+                    val next = slotIdx + 1
+                    if (next < vm.selectedTemplate.value.slots.size) {
+                        startCamera(next)
+                    } else {
+                        activeCameraSlot = -1
+                    }
                 },
                 onCameraCancel = {
                     if (activeCameraSlot >= 0) vm.clearDraftCapture(activeCameraSlot)

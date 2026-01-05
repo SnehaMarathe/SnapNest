@@ -12,7 +12,7 @@ import androidx.lifecycle.ViewModel
 
 class CollageViewModel : ViewModel() {
 
-    val selectedTemplate = mutableStateOf(CollageTemplates.all.first())
+    val selectedTemplate = mutableStateOf(CollageTemplates.all.first { it.id == "hero_two" })
     val slotUris = mutableStateListOf<Uri?>()
     val slotTransforms = mutableStateListOf<SlotTransform>()
 
